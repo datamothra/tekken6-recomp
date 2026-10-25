@@ -11,6 +11,9 @@
 #   tools/run_mac.sh --build-dir DIR
 # Keyboard acts as a controller (mnk_mode): Return/X=Start, Space=A, Backspace=B, L=X, P=Y,
 # WASD=left stick, Shift+arrows=d-pad, 1/3=shoulders, Q/E=triggers. F3 toggles the FPS overlay.
+# execute_unclipped_draw_vs_on_cpu restores Xenia's default (rexglue-sdk PR 513): without it,
+# Tekken's depth-only clears with an 8192 scissor claim all of EDRAM and wrap over the scene
+# colour buffer, which left Practice mode with a black scene and fights with black hit frames.
 # Anything after -- is passed to the host executable.
 set -euo pipefail
 
@@ -64,5 +67,6 @@ exec "$host" \
   --log_file="$log_file" --log_level="$log" \
   --gpu_backend=vulkan --render_target_path_vulkan="$rt_path" \
   --async_shader_compilation=false --anisotropic_override=0 \
+  --execute_unclipped_draw_vs_on_cpu=true \
   --mnk_mode=true \
   "${extra[@]}"
