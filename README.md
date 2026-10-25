@@ -45,6 +45,83 @@ code uses FMA3 by default for faster explicit fused operations; the resulting
 executable requires an FMA3-capable CPU. Set `-DTEKKEN6_ENABLE_FMA3=OFF` for a
 portable build.
 
+## macOS build (Apple Silicon or Intel)
+
+macOS is a supported ReXGlue host platform: the Xenos GPU runs through the
+SDK's Vulkan backend on a pinned MoltenVK, windowing goes through SDL3/Cocoa,
+and the whole toolchain builds natively, so there is no cross-compiler step.
+The host-framebuffer (FBO) render path is the default on macOS: it renders
+fights correctly on Metal. The fragment shader interlock (FSI) path runs faster
+but shows stale EDRAM bands in resolved textures (floor reflections, menu
+blur) under MoltenVK, so it is opt-in. There is no D3D12 on macOS.
+
+Requirements: Xcode command line tools (AppleClang 16+), `brew install cmake ninja`.
+
+```sh
+tools/build_mac.sh --iso /path/to/your/Tekken6.iso   # or --game /path/to/extracted
+tools/run_mac.sh                                      # host framebuffers (default)
+tools/run_mac.sh --fsi                                # interlock path (faster, stale bands)
+tools/run_mac.sh --res 768x432 --offscreen 512        # lighter internal targets
+```
+
+The script extracts the ISO into `game/`, builds the SDK and its codegen tool,
+generates guest code from your XEX, and links `build/mac-<arch>/tekken6` with
+`librexruntime`, the `librexgpu-xenos` plugin and a `vulkan/` folder holding the
+pinned Vulkan loader and MoltenVK next to it. Saves go to `user/`, shader
+caches to `cache/<path>/`. `tools/run_mac.sh --log` keeps logging on; pass host
+flags after `--`. FMA3 and SSSE3 flags only apply on x86-64 hosts; on arm64 the
+generated code's fused operations lower to NEON directly.
+
+Three SDK bugs fixed in the carried patch were needed on a POSIX host: a lost
+wakeup in the signal-and-wait/auto-reset event emulation (the game hung on its
+first frame fence), a manual-reset SetEvent that did not release threads already
+waiting when a ResetEvent followed at once (the game's mutex-plus-event
+condition variables notify that way; Practice mode hung at character select
+two times in three), and the SPIR-V translator reading the texture-fetch
+exponent bias from the wrong fetch-constant word (every post-processed scene
+saturated to white; rexglue-sdk issue 456). After changing anything in the
+shader translator, delete `cache/` so stale translated shaders are not reused.
+
+One rendering bug needed no SDK change at all. Tekken clears depth every frame
+with unclipped draws under an 8192-high scissor; with the SDK's default
+`execute_unclipped_draw_vs_on_cpu=false` (Xenia's default is true, see
+rexglue-sdk PR 513) the render target cache sizes those claims from the
+scissor, so a tiny target at the end of EDRAM claims all of it, wraps past
+tile 2047 and takes over the scene colour buffer at tile 0. The contents then
+round-trip through a 4x MSAA depth target and come back black: Practice mode
+showed only the HUD, and fights flashed black between attacks. `run_mac.sh`
+passes `--execute_unclipped_draw_vs_on_cpu=true`, which sizes the claims from
+the actual vertices, and the scene is intact on both paths.
+
+For hangs: run with `REX_DEBUG_DUMP_TRIGGER=/some/path` in the environment and
+create that file while the game is stuck. The runtime prints every event,
+mutex and semaphore with its host state and what each guest thread is waiting
+on, to stderr and the log.
+
+Rendering notes specific to MoltenVK: Metal cannot disable primitive restart
+for strip topologies and MoltenVK fails pipeline creation when asked to, which
+silently drops those draws (a black 3D scene behind a working HUD). The carried
+patch forces restart on for strip pipelines on Apple, in both the guest pipeline
+cache and the presentation pipeline. Keep the integer ownership-transfer formats:
+without them the SDK decides transfers cannot be bit-exact and switches to the
+FSI path on its own. The `window_high_pixel_density` cvar can be set to `false`
+to present at 1x on a Retina display. The first run with an empty `cache/` looks
+frozen or black for 10-20 s while shaders compile.
+
+Measured on an M1 Max (2026-10-24, F3 overlay, Practice mode on City After
+Dark so every run uses the same stage): 42-44 fps at every setting of the
+framebuffer path (1024x576, 768x432, 640x360, offscreen 512, both) with the GPU
+at 99 %; `--fsi` 25 fps. The cost is not pixels. A Metal System Trace shows
+about 110 render passes, 85 compute dispatches and 90 buffer or texture copies
+per frame, each its own Metal encoder; on Apple's tile-based GPU every encoder
+pays a fixed load, store and pipeline-drain cost, and 285 of them add up to the
+23 ms frame. Reaching 60 means fewer encoders per frame (uploads batched before
+the passes, fewer mid-frame pass splits), which is SDK work, not a setting.
+Lighter stages do hit 60 already, and an M5 Max runs fights at a locked 60
+with the default settings. The CPU side has headroom: the game's main
+thread spins on frame sync and the FPS overlay makes the UI thread repaint
+continuously, but neither limits the frame rate.
+
 ## Portable ISO builder
 
 The release can include a self-contained `Tekken 6 Builder.exe` beside its
