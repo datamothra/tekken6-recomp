@@ -108,19 +108,31 @@ FSI path on its own. The `window_high_pixel_density` cvar can be set to `false`
 to present at 1x on a Retina display. The first run with an empty `cache/` looks
 frozen or black for 10-20 s while shaders compile.
 
-Measured on an M1 Max (2026-10-24, F3 overlay, Practice mode on City After
-Dark so every run uses the same stage): 42-44 fps at every setting of the
-framebuffer path (1024x576, 768x432, 640x360, offscreen 512, both) with the GPU
-at 99 %; `--fsi` 25 fps. The cost is not pixels. A Metal System Trace shows
-about 110 render passes, 85 compute dispatches and 90 buffer or texture copies
-per frame, each its own Metal encoder; on Apple's tile-based GPU every encoder
-pays a fixed load, store and pipeline-drain cost, and 285 of them add up to the
-23 ms frame. Reaching 60 means fewer encoders per frame (uploads batched before
-the passes, fewer mid-frame pass splits), which is SDK work, not a setting.
-Lighter stages do hit 60 already, and an M5 Max runs fights at a locked 60
-with the default settings. The CPU side has headroom: the game's main
-thread spins on frame sync and the FPS overlay makes the UI thread repaint
-continuously, but neither limits the frame rate.
+Performance on Apple Silicon is limited by render pass count, not pixels:
+lowering the internal resolution changes nothing. Every Metal render pass on
+a tile-based GPU loads and stores its attachments, and the SDK used to end the
+open pass for each upload of guest memory that changed since the last draw
+(vertex data, mostly), then restart it. In a fight that cut the shadow-map
+pass into about 25 pieces and the scene pass into about 45, roughly 125 render
+passes a frame. The carried patch records such an upload ahead of the open
+pass instead whenever no draw already in that pass reads the uploaded pages,
+which leaves about 56 passes a frame. `--vulkan_hoist_uploads=false` restores
+the old behaviour for comparison.
+
+Measured on an M1 Max with the game's own count of frames that reach the
+screen (the F3 overlay counts frames drawn, which overstates it), 90 s of
+random input in Practice on City After Dark and in an Arcade fight, one run
+each: about 21 frames shown per second before, with as many drawn and
+dropped, and about 60 after. A Metal System Trace with the change puts the GPU
+at about 10.5 ms of the 16.7 ms frame in that Practice fight. Heavier moments
+still come close to the budget, so an occasional dropped frame remains. An M5
+Max runs fights at a locked 60 either way. Measure with the screen unlocked,
+nothing else heavy running, and the full-power charger: an M1 Max on a small
+charger drains and throttles under this load.
+
+The Intel build compiles and starts, but on an AMD Radeon Pro 580 (macOS 13)
+the GPU hangs about half a minute in, at the main menu, with or without the
+changes above; that is still open.
 
 ## Portable ISO builder
 
