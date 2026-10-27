@@ -47,9 +47,7 @@ portable build.
 
 ## macOS build
 
-Made for Apple Silicon Macs. Intel Macs are experimental: the build works, but
-on the one Intel Mac tried so far (Radeon Pro 580, macOS 13) the game freezes at
-the main menu after about half a minute.
+Runs on Apple Silicon and Intel Macs; build on each kind for its own app.
 
 You need the Xcode command line tools, `brew install cmake ninja`, and your own
 Tekken 6 ISO.
@@ -91,6 +89,8 @@ writes the frame timings for measuring.
 Controls: a gamepad works, or the keyboard. Return is Start, Space is A,
 Backspace is B, L is X, P is Y, WASD is the stick, Shift+arrows is the d-pad,
 1 and 3 are the shoulder buttons, Q and E the triggers. F3 shows the frame rate.
+In a fight X is left punch, Y right punch, A left kick and B right kick, so on
+the keyboard L, P, ; (or Space) and ' (or Backspace) are 1, 2, 3 and 4.
 
 `run_mac.sh` options: `--fullscreen`, `--res 768x432` for a lower 3D
 resolution, `--fsi` for a faster mode that has visual glitches on the Mac, and
