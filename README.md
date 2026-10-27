@@ -56,7 +56,8 @@ portable build.
 
 ### Install
 
-1. Download `Tekken 6 Builder.zip` from Releases and open `Tekken 6 Builder`.
+1. Download `Tekken6-Builder-macOS-<version>.zip` from Releases, unzip it and open
+   `Tekken 6 Builder`.
 2. Click **Choose Disc Image** and pick your `.iso`. If it asks for Apple's
    Command Line Tools, click **Install**, then **Try Again**.
 3. Wait for it to finish (a few minutes), then click **Open Tekken 6**.
