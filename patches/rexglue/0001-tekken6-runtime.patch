@@ -10989,34 +10989,6 @@ index 6788214140959ff171291ad9285c5b9725e688a0..f888265ad4867c950c03c75201234cc3
      upload_regions_.clear();
    }
    return successful;
-diff --git a/src/graphics/vulkan/texture_cache.cpp b/src/graphics/vulkan/texture_cache.cpp
-index ecbd940d8fa4dac148808f8d88ca0dd1967b6e1c..d2907d600a0a2ba6d8ea82d285d1019a5c721dd9 100644
---- a/src/graphics/vulkan/texture_cache.cpp
-+++ b/src/graphics/vulkan/texture_cache.cpp
-@@ -12,6 +12,7 @@
- #include <algorithm>
- #include <array>
- #include <cstddef>
-+#include <cstdlib>
- #include <cstring>
- #include <utility>
- 
-@@ -3173,6 +3174,15 @@ bool VulkanTextureCache::Initialize() {
- const VulkanTextureCache::HostFormatPair& VulkanTextureCache::GetHostFormatPair(
-     TextureKey key) const {
-   const HostFormatPair& host_format_pair = host_formats_[uint32_t(key.format)];
-+  // Diagnostic A/B for the retail startup logo.  Its guest bytes are known
-+  // good, so route only this texture through the existing DXT1->RGBA8 path to
-+  // distinguish the direct BC1 upload from shader/rasterization problems.
-+  if (key.base_page == 0x10BC4 &&
-+      std::getenv("TEKKEN6_FORCE_LOGO_DXT1_RGBA") != nullptr &&
-+      (key.format == xenos::TextureFormat::k_DXT4_5 ||
-+       key.format == xenos::TextureFormat::k_DXT4_5_AS_16_16_16_16)) {
-+    return kHostFormatDXT4_5Unaligned;
-+  }
-   if (!host_format_pair.format_unsigned.block_compressed &&
-       !host_format_pair.format_signed.block_compressed) {
-     return host_format_pair;
 diff --git a/src/input/xinput/xinput_input_driver.cpp b/src/input/xinput/xinput_input_driver.cpp
 index a6a1da9ec3aaba1734f2e6b6e0ae65deba6f4879..45c242afa82b876e90f854c296fdb861aa8cb7cf 100644
 --- a/src/input/xinput/xinput_input_driver.cpp
@@ -12137,6 +12109,25 @@ index 8197bb4610dcc3e53946a84864e4b936af21d0f0..db6cf74275f64fd82eebb3b40d7d9755
    }
  
    bool ext_1_2_KHR_sampler_mirror_clamp_to_edge = false;
+diff --git a/src/ui/vulkan/vulkan_moltenvk.cpp b/src/ui/vulkan/vulkan_moltenvk.cpp
+index e2e2c163bec4b3aafc5ec04189aa39deb935a2dc..d1e83ecb9b9542e91fbe236633f10a7a39fd4d0a 100644
+--- a/src/ui/vulkan/vulkan_moltenvk.cpp
++++ b/src/ui/vulkan/vulkan_moltenvk.cpp
+@@ -207,6 +207,14 @@ void ConfigureMacOSVulkanEnvironment(const MacOSVulkanRuntimePaths& paths) {
+       setenv("VK_ICD_FILENAMES", moltenvk_icd.c_str(), 1);
+     }
+   }
++
++#if defined(__x86_64__)
++  // Intel Macs have AMD or Intel GPUs. With Metal argument buffers an AMD
++  // Radeon Pro 580 hits a GPU timeout as soon as Tekken 6 draws a textured
++  // character; binding resources directly works. Must be set before MoltenVK
++  // loads; an explicit setting still wins.
++  setenv("MVK_CONFIG_USE_METAL_ARGUMENT_BUFFERS", "0", 0);
++#endif
+ }
+ 
+ }  // namespace rex::ui::vulkan
 diff --git a/src/ui/vulkan/vulkan_presenter.cpp b/src/ui/vulkan/vulkan_presenter.cpp
 index 23645effaa5b659471aae7375b3b0fd48f41c35e..4e51713833091cc4e735df2f429b531d3af0c3fe 100644
 --- a/src/ui/vulkan/vulkan_presenter.cpp

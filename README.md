@@ -45,75 +45,76 @@ code uses FMA3 by default for faster explicit fused operations; the resulting
 executable requires an FMA3-capable CPU. Set `-DTEKKEN6_ENABLE_FMA3=OFF` for a
 portable build.
 
-## macOS build
+## macOS
 
-Runs on Apple Silicon and Intel Macs; build on each kind for its own app.
+Apple Silicon Macs need macOS 13.3 or later, Intel Macs macOS 15 or later (on
+older macOS the AMD graphics driver draws the characters black). You need your
+own disc image of Tekken 6 for the Xbox 360, USA/Europe, Rev 1.
 
-You need the Xcode command line tools, `brew install cmake ninja`, and your own
-Tekken 6 ISO.
+### Tekken 6 Builder
+
+1. Unzip `Tekken 6 Builder.zip` and open `Tekken 6 Builder`. It isn't notarized,
+   so the first time macOS refuses; go to System Settings > Privacy & Security
+   and click Open Anyway.
+2. Click Choose Disc Image and pick your `.iso`. If Apple's Command Line Tools
+   are missing, it offers to install them.
+3. It builds the game on your Mac (2 minutes on an M5 Max, longer on older Macs), puts `Tekken 6.app` in
+   Applications and the game files in `~/Library/Application Support/Tekken 6`.
+
+The builder contains this project's source, CMake and Ninja, but nothing from
+the game. `tools/package_mac_builder.sh` makes it.
+
+### Building from source
+
+Needs the Xcode Command Line Tools and `brew install cmake ninja`.
 
 ```sh
-tools/build_mac.sh --iso /path/to/your/Tekken6.iso   # builds it and copies the game into game/
-tools/make_mac_app.sh --install                       # puts Tekken 6.app in /Applications
-tools/run_mac.sh                                      # or start it from the terminal
+tools/build_mac.sh --iso /path/to/Tekken6.iso   # --arch x86_64 builds the Intel version
+tools/make_mac_app.sh --install                  # Tekken 6.app in /Applications
+tools/run_mac.sh                                 # or start it from the terminal
 ```
 
-On the Mac that built it, the app and `run_mac.sh` share the game, saves and
-shader cache in this folder (`game/`, `user/`, `cache/`). The app's icon is made
-from the artwork on your disc, so no game art is stored here.
+### Game files
 
-The app also works on another Mac (the same chip type: an Apple Silicon build for
-Apple Silicon). Copy `Tekken 6.app` over and open it. The first time, it asks for
-that person's own disc: drag the disc image (`.iso`) into the window that opens,
-or `Default.xex` from a copy of the disc. It checks that it's the same release
-this app was built from (USA/Europe, Rev 1), then copies the game out of the image
-(about 7 GB, under a minute) or links to the copy where it is. Everything goes in
-`~/Library/Application Support/Tekken 6` (`game/`, `user/`, `cache/`). After that
-it starts straight away. `TEKKEN6_DATA=<folder>` points it somewhere else.
+The first time the app opens it asks where the game is: a folder with the
+disc's files (the one with `Default.xex`) is used where it is, and a disc image
+is copied out to a folder you choose. Hold Option while opening the app to
+choose again. Saves and the shader cache are in
+`~/Library/Application Support/Tekken 6`. `TEKKEN6_DATA=<dir>` makes the app use
+`<dir>/game`, `<dir>/user` and `<dir>/cache` instead, and `run_mac.sh --game DIR`
+reads the game from `DIR`.
 
-On an M5 Max fights run at a steady 60 fps. An M1 Max manages 60 most of the
-time and drops the odd frame in busy moments. Keep a laptop on a proper charger;
-on battery or a small charger it slows down.
+### Playing
 
-The first launch shows a black screen for 10-20 seconds while it prepares its
-shaders. After that it starts straight away. Shaders the game hasn't used before
-are prepared in the background: the picture may hold for a moment, but the game
-and its sound keep going together.
+Keyboard: Return is Start, Space A, Backspace B, L X, P Y, WASD the stick,
+Shift+arrows the d-pad, 1 and 3 the shoulder buttons, Q and E the triggers. In a
+fight L, P, ; and ' are 1, 2, 3 and 4. F3 shows the frame rate. Gamepads work.
 
-Motion is kept even: the game's 60 Hz clock follows the display, and it is
-nudged so every frame reaches the screen at the same point of the display's
-refresh, instead of some frames showing twice and others not at all.
-`--vulkan_present_pacing=false` turns this off, and `TEKKEN6_PACING_LOG=<file>`
-writes the frame timings for measuring.
+The first launch shows a black screen for 10 to 20 seconds while shaders are
+prepared. Fights run at about 60 fps on an M5 Max, with a few dropped frames a
+minute. Laptops slow down on battery or a small charger.
 
-Controls: a gamepad works, or the keyboard. Return is Start, Space is A,
-Backspace is B, L is X, P is Y, WASD is the stick, Shift+arrows is the d-pad,
-1 and 3 are the shoulder buttons, Q and E the triggers. F3 shows the frame rate.
-In a fight X is left punch, Y right punch, A left kick and B right kick, so on
-the keyboard L, P, ; (or Space) and ' (or Backspace) are 1, 2, 3 and 4.
+`run_mac.sh` options: `--fullscreen`, `--res 768x432` for a lower 3D resolution,
+`--log` to write a log to `logs/`. `--fsi` is faster but has visual glitches.
 
-`run_mac.sh` options: `--fullscreen`, `--res 768x432` for a lower 3D
-resolution, `--fsi` for a faster mode that has visual glitches on the Mac, and
-`--log` to keep a log in `logs/`.
+### Mac changes
 
-What had to change for the Mac, all in the SDK patch:
+All in the SDK patch:
 
-- The game froze on its first frame, and sometimes at character select, because
-  of two thread-timing bugs in how the SDK imitates the Xbox's events on macOS.
-- The 3D scene was missing, because Metal can't draw one kind of shape
-  the way the game asks for it.
-- Every scene came out washed white, from a wrong value in the shader converter.
-- The M1 Max ran at about 21 fps until the graphics work was regrouped into fewer
-  passes per frame.
-- A white square sat beside the player's name in fights, where the Xbox shows
-  the gamer picture; with no profile picture it is now left empty.
+- Two thread-timing bugs in the Xbox event emulation froze the first frame.
+- Metal can't draw one primitive type the game uses; it is converted.
+- A wrong value in the shader converter washed every scene out white.
+- Graphics work is grouped into fewer passes (M1 Max: 21 fps before, 60 after).
+- Frames are paced evenly against the display's refresh
+  (`--vulkan_present_pacing=false` turns it off).
+- Intel Macs bind resources without Metal argument buffers, which hung the AMD
+  GPU.
+- No white square where the Xbox shows the gamer picture.
 
-`run_mac.sh` also turns on `--execute_unclipped_draw_vs_on_cpu=true`. Without it
-Practice mode shows only the HUD and fights flash black.
-
-For developers: after changing the shader converter, delete `cache/`. If the
-game hangs, run it with `REX_DEBUG_DUMP_TRIGGER=/some/file` in the environment
-and create that file; it prints what every game thread is waiting on.
+`--execute_unclipped_draw_vs_on_cpu=true` (set by the launchers) is needed for
+Practice mode and fights to render. After changing the shader converter, delete
+`cache/`. If the game hangs, set `REX_DEBUG_DUMP_TRIGGER=/some/file` and create
+that file to print what every thread is waiting on.
 
 ## Portable ISO builder
 
