@@ -4,12 +4,16 @@
 # disc extractor; people open it, pick their own disc image, and it builds
 # Tekken 6.app on their Mac (tools/mac_builder/build_game.sh).
 #
-#   tools/package_mac_builder.sh --cmake DIR --ninja FILE [--out DIR]
+#   tools/package_mac_builder.sh --cmake DIR --ninja FILE [--out DIR] [--sign ID [--notarize PROFILE]]
 #
 #   --cmake DIR   CMake.app/Contents from the official macOS universal release
 #                 (cmake-4.4.4-macos-universal.tar.gz from cmake.org or GitHub)
 #   --ninja FILE  ninja from the official ninja-mac.zip release (universal)
 #   --out DIR     default build/mac-builder
+#   --sign ID     sign with this Developer ID Application certificate (default: ad-hoc,
+#                 so people have to click Open Anyway)
+#   --notarize P  send it to Apple with the notarytool keychain profile P and staple the
+#                 approval, so it opens like any downloaded app
 #
 # Needs both Mac builds of xdvdfs_tool (tools/build_mac.sh --arch arm64 and
 # --arch x86_64, or --sdk-only for each), so the builder runs on either kind of Mac.
@@ -20,17 +24,22 @@ cd "$root"
 cmake_dir=""
 ninja=""
 out="$root/build/mac-builder"
+sign_id=""
+notary=""
 while (( $# )); do
   case "$1" in
     --cmake) cmake_dir="${2:A}"; shift 2 ;;
     --ninja) ninja="${2:A}"; shift 2 ;;
     --out) out="${2:A}"; shift 2 ;;
-    -h|--help) sed -n '2,16p' "$0"; exit 0 ;;
+    --sign) sign_id="$2"; shift 2 ;;
+    --notarize) notary="$2"; shift 2 ;;
+    -h|--help) sed -n '2,20p' "$0"; exit 0 ;;
     *) echo "unknown option: $1" >&2; exit 1 ;;
   esac
 done
 [[ -x "$cmake_dir/bin/cmake" && -d "$cmake_dir/share" ]] || { echo "--cmake must be CMake.app/Contents (with bin/cmake)" >&2; exit 1; }
 [[ -x "$ninja" ]] || { echo "--ninja must be the ninja binary" >&2; exit 1; }
+[[ -z "$notary" || -n "$sign_id" ]] || { echo "--notarize needs --sign" >&2; exit 1; }
 for a in arm64 amd64; do
   [[ -x "build/mac-$a/tools/xdvdfs/xdvdfs_tool" ]] || { echo "missing build/mac-$a/tools/xdvdfs/xdvdfs_tool" >&2; exit 1; }
 done
@@ -64,6 +73,12 @@ rm -rf "$res/cmake/share/"{aclocal,bash-completion,emacs,vim}
 cp "$ninja" "$res/ninja"
 lipo -create build/mac-arm64/tools/xdvdfs/xdvdfs_tool build/mac-amd64/tools/xdvdfs/xdvdfs_tool -output "$res/xdvdfs_tool"
 cp tools/mac_builder/build_game.sh "$res/"
+# License texts that CMake's and Ninja's licenses ask to ship with them, and the SDK's
+mkdir -p "$res/licenses/cmake"
+(cd "$cmake_dir/doc/cmake" && find . -type f ! -path './html/*' \( -iname 'LICENSE*' -o -iname 'COPYING*' \
+  -o -iname 'NOTICE*' -o -iname 'Copyright*' \) | cpio -pdm --quiet "$res/licenses/cmake")
+cp tools/mac_builder/ninja-COPYING "$res/licenses/ninja-COPYING"
+cp third_party/rexglue-sdk/LICENSE "$res/licenses/rexglue-sdk-LICENSE"
 chmod +x "$res/build_game.sh" "$res/ninja" "$res/xdvdfs_tool" "$res/cmake/bin/cmake"
 
 echo "Builder window"
@@ -91,11 +106,22 @@ cat > "$contents/Info.plist" <<EOF
 </plist>
 EOF
 
-# Ad-hoc signatures: our own binaries, then the bundle. CMake keeps Kitware's.
+# Sign our own binaries, then the bundle. CMake keeps Kitware's Developer ID signature.
+# Notarization needs the hardened runtime and a timestamp on each.
+if [[ -n "$sign_id" ]]; then sign=(--sign "$sign_id" --options runtime --timestamp); else sign=(--sign -); fi
 for f in "$res/ninja" "$res/xdvdfs_tool" "$contents/MacOS/Tekken 6 Builder"; do
-  codesign --force --sign - "$f"
+  codesign --force "${sign[@]}" "$f"
 done
-codesign --force --sign - "$app"
-(cd "$out" && rm -f "Tekken 6 Builder.zip" && ditto -c -k --keepParent "Tekken 6 Builder.app" "Tekken 6 Builder.zip")
+codesign --force "${sign[@]}" "$app"
+codesign --verify --deep --strict "$app"
+zip_app() { (cd "$out" && rm -f "Tekken 6 Builder.zip" && ditto -c -k --keepParent "Tekken 6 Builder.app" "Tekken 6 Builder.zip") }
+zip_app
+if [[ -n "$notary" ]]; then
+  echo "Notarizing (a few minutes)"
+  xcrun notarytool submit "$out/Tekken 6 Builder.zip" --keychain-profile "$notary" --wait | tee "$tmp/notary"
+  grep -q "status: Accepted" "$tmp/notary" || { echo "Apple didn't accept it; see: xcrun notarytool log <id> --keychain-profile $notary" >&2; exit 1; }
+  xcrun stapler staple "$app"
+  zip_app
+fi
 echo "Built: $app"
 echo "Zip:   $out/Tekken 6 Builder.zip ($(du -h "$out/Tekken 6 Builder.zip" | cut -f1))"

@@ -57,8 +57,6 @@ portable build.
 ### Install
 
 1. Download `Tekken 6 Builder.zip` from Releases and open `Tekken 6 Builder`.
-   macOS blocks it the first time because it isn't notarized: open System
-   Settings > Privacy & Security and click **Open Anyway**.
 2. Click **Choose Disc Image** and pick your `.iso`. If it asks for Apple's
    Command Line Tools, click **Install**, then **Try Again**.
 3. Wait for it to finish (a few minutes), then click **Open Tekken 6**.
@@ -98,7 +96,8 @@ tools/make_mac_app.sh --install                  # puts Tekken 6.app in /Applica
 
 `tools/run_mac.sh` starts it from the terminal: `--game DIR` for the game
 folder, `--fullscreen`, `--res 768x432` for a lower 3D resolution, `--log` to
-write a log to `logs/`. `tools/package_mac_builder.sh` makes the builder.
+write a log to `logs/`. `tools/package_mac_builder.sh` makes the builder
+(`--sign` and `--notarize` for a Developer ID signed release).
 
 ### What changed for macOS
 
