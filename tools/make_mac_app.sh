@@ -3,14 +3,17 @@
 #
 #   tools/make_mac_app.sh                  # -> build/mac-<arch>/Tekken 6.app
 #   tools/make_mac_app.sh --install        # ...and copy it to /Applications
-#   tools/make_mac_app.sh --data-root DIR  # where game/, user/ and cache/ live (default: this checkout)
+#   tools/make_mac_app.sh --data-root DIR  # where game/, user/ and cache/ live on this Mac (default: this checkout)
 #   tools/make_mac_app.sh --build-dir DIR
 #
-# The bundle holds the host, its two dylibs and the pinned Vulkan loader and
-# MoltenVK; the game data stays outside it (6+ GB) in the data root, so saves and
-# the shader cache are the same ones tools/run_mac.sh uses. The launcher passes
-# run_mac.sh's default settings. The icon is made from the disc's own dashboard
-# art (tools/mac_icon.py), so no game art is stored in the repo.
+# The bundle holds the host, its two dylibs, the pinned Vulkan loader and
+# MoltenVK, and the ISO extractor; the game data stays outside it (6+ GB). On the
+# Mac that built it the app uses the data root, so saves and the shader cache are
+# the same ones tools/run_mac.sh uses. On any other Mac it keeps the game, saves
+# and cache in ~/Library/Application Support/Tekken 6, and the first launch asks
+# for that person's own disc image (or a copy of the disc) and sets it up there.
+# The launcher passes run_mac.sh's default settings. The icon is made from the
+# disc's own dashboard art (tools/mac_icon.py), so no game art is stored in the repo.
 set -euo pipefail
 
 root="${0:A:h:h}"
@@ -41,20 +44,62 @@ mkdir -p "$contents/MacOS" "$contents/Resources"
 # The GPU plugin is looked up next to the executable and the runtime through
 # @executable_path, so all three sit in MacOS/. The SDK finds the loader and
 # MoltenVK under Contents/Resources/vulkan.
-cp "$build_dir/tekken6" "$build_dir/librexruntime.dylib" "$build_dir/librexgpu-xenos.dylib" "$contents/MacOS/"
+cp "$build_dir/tekken6" "$build_dir/librexruntime.dylib" "$build_dir/librexgpu-xenos.dylib" "$build_dir/tools/xdvdfs/xdvdfs_tool" "$contents/MacOS/"
 cp -R "$build_dir/vulkan" "$contents/Resources/vulkan"
 print -r -- "$data_root" > "$contents/Resources/data-root"
+# the code is recompiled from this exact Default.xex: another disc's would crash it
+xex="$data_root/game/Default.xex"; [[ -f "$xex" ]] || xex="$data_root/game/default.xex"
+shasum "$xex" | cut -d' ' -f1 > "$contents/Resources/xex-sha1"
 
 cat > "$contents/MacOS/launch" <<'EOF'
 #!/bin/zsh
-# Same settings as tools/run_mac.sh with no options. exec keeps this process, so
-# the Dock shows the app rather than a separate tekken6 binary.
+# Where the game is: $TEKKEN6_DATA, else the folder the app was built from (on the
+# Mac that built it), else ~/Library/Application Support/Tekken 6. With none, the
+# person's own disc image (.iso) or a copy of the disc (its Default.xex) is asked
+# for once and set up in Application Support: an image is copied out (6.6 GB, about
+# a minute), a copy is linked where it is. Then the same settings as
+# tools/run_mac.sh with no options; exec keeps this process, so the Dock shows the
+# app rather than a separate tekken6 binary.
+#   TEKKEN6_SOURCE=<iso or Default.xex>  answers the question without the dialog
+#   TEKKEN6_PREPARE_ONLY=1               sets the game up and stops before starting it
 here="${0:A:h}"
-data_root="$(<"$here/../Resources/data-root")"
-if [[ ! -f "$data_root/game/Default.xex" && ! -f "$data_root/game/default.xex" ]]; then
-  osascript -e "display alert \"Tekken 6\" message \"No game data in $data_root/game.\"" >/dev/null
-  exit 1
+res="$here/../Resources"
+support="$HOME/Library/Application Support/Tekken 6"
+has_game() { [[ -f "$1/game/Default.xex" || -f "$1/game/default.xex" ]] }
+alert() { [[ -n "${TEKKEN6_SOURCE:-}" ]] && print -u2 -- "$1" || osascript -e "display alert \"Tekken 6\" message \"$1\"" >/dev/null }
+right_xex() { [[ "$(shasum "$1" | cut -d' ' -f1)" == "$(<"$res/xex-sha1")" ]] }
+wrong="That isn't the Tekken 6 this app was made from (Tekken 6 for the Xbox 360, USA/Europe, Rev 1)."
+
+data_root=""
+for d in "${TEKKEN6_DATA:-}" "$(<"$res/data-root")" "$support"; do
+  [[ -n "$d" ]] && has_game "$d" && { data_root="$d"; break; }
+done
+
+if [[ -z "$data_root" ]]; then
+  data_root="$support"
+  src="${TEKKEN6_SOURCE:-}"
+  if [[ -z "$src" ]]; then
+    # a file dragged from Finder onto this window picks it
+    src="$(osascript -e 'POSIX path of (choose file with prompt "Drag your Tekken 6 disc image (.iso) here, or Default.xex from a copy of the disc." of type {"iso", "xex", "public.disk-image"})' 2>/dev/null)" || exit 0
+  fi
+  [[ -f "$src" ]] || { alert "Can't find $src."; exit 1; }
+  mkdir -p "$support" || { alert "Can't write $support."; exit 1; }
+  if [[ "${src:l}" == *.xex ]]; then
+    right_xex "$src" || { alert "$wrong"; exit 1; }
+    rm -rf "$support/game"; ln -s "${src:A:h}" "$support/game"
+  else
+    tmp="$support/game.part"; rm -rf "$tmp"; mkdir -p "$tmp"
+    "$here/xdvdfs_tool" extract "$src" Default.xex "$tmp/Default.xex" >/dev/null 2>&1 || { rm -rf "$tmp"; alert "Can't read $src as an Xbox 360 disc image."; exit 1; }
+    right_xex "$tmp/Default.xex" || { rm -rf "$tmp"; alert "$wrong"; exit 1; }
+    rm "$tmp/Default.xex"
+    [[ -n "${TEKKEN6_SOURCE:-}" ]] || osascript -e 'display notification "Copying the game from your disc image (about a minute)" with title "Tekken 6"' >/dev/null
+    "$here/xdvdfs_tool" extract-all "$src" "$tmp" >/dev/null 2>&1 || true
+    [[ -f "$tmp/Default.xex" || -f "$tmp/default.xex" ]] || { rm -rf "$tmp"; alert "Copying from $src failed (is there 7 GB free?)."; exit 1; }
+    rm -rf "$support/game"; mv "$tmp" "$support/game"
+  fi
 fi
+[[ -n "${TEKKEN6_PREPARE_ONLY:-}" ]] && { print -- "$data_root"; exit 0; }
+
 mkdir -p "$data_root/user" "$data_root/cache/fbo"
 export TEKKEN6_YIELD_STARTUP_SPIN=1
 exec "$here/tekken6" \
@@ -103,7 +148,7 @@ done
 iconutil -c icns "$icon_tmp/AppIcon.iconset" -o "$contents/Resources/AppIcon.icns"
 
 # Ad-hoc sign the nested code first, then the bundle.
-for f in "$contents"/MacOS/*.dylib "$contents"/Resources/vulkan/lib/*.dylib "$contents/MacOS/tekken6"; do
+for f in "$contents"/MacOS/*.dylib "$contents"/Resources/vulkan/lib/*.dylib "$contents/MacOS/tekken6" "$contents/MacOS/xdvdfs_tool"; do
   codesign --force --sign - "$f" 2>/dev/null
 done
 codesign --force --sign - "$app" 2>/dev/null

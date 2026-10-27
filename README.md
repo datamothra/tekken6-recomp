@@ -60,9 +60,18 @@ tools/make_mac_app.sh --install                       # puts Tekken 6.app in /Ap
 tools/run_mac.sh                                      # or start it from the terminal
 ```
 
-The app and `run_mac.sh` share the game, saves and shader cache in this folder
-(`game/`, `user/`, `cache/`). The app's icon is made from the artwork on your
-disc, so no game art is stored here.
+On the Mac that built it, the app and `run_mac.sh` share the game, saves and
+shader cache in this folder (`game/`, `user/`, `cache/`). The app's icon is made
+from the artwork on your disc, so no game art is stored here.
+
+The app also works on another Mac (the same chip type: an Apple Silicon build for
+Apple Silicon). Copy `Tekken 6.app` over and open it. The first time, it asks for
+that person's own disc: drag the disc image (`.iso`) into the window that opens,
+or `Default.xex` from a copy of the disc. It checks that it's the same release
+this app was built from (USA/Europe, Rev 1), then copies the game out of the image
+(about 7 GB, under a minute) or links to the copy where it is. Everything goes in
+`~/Library/Application Support/Tekken 6` (`game/`, `user/`, `cache/`). After that
+it starts straight away. `TEKKEN6_DATA=<folder>` points it somewhere else.
 
 On an M5 Max fights run at a steady 60 fps. An M1 Max manages 60 most of the
 time and drops the odd frame in busy moments. Keep a laptop on a proper charger;
