@@ -47,74 +47,79 @@ portable build.
 
 ## macOS
 
-Apple Silicon Macs need macOS 13.3 or later, Intel Macs macOS 15 or later (on
-older macOS the AMD graphics driver draws the characters black). You need your
-own disc image of Tekken 6 for the Xbox 360, USA/Europe, Rev 1.
+### What you need
 
-### Tekken 6 Builder
+- A Mac with Apple Silicon and macOS 13.3 or later, or an Intel Mac with
+  macOS 15 or later
+- Your own disc image (`.iso`) of Tekken 6 for the Xbox 360, USA/Europe, Rev 1
+- About 20 GB of free space
 
-1. Unzip `Tekken 6 Builder.zip` and open `Tekken 6 Builder`. It isn't notarized,
-   so the first time macOS refuses; go to System Settings > Privacy & Security
-   and click Open Anyway.
-2. Click Choose Disc Image and pick your `.iso`. If Apple's Command Line Tools
-   are missing, it offers to install them.
-3. It builds the game on your Mac (2 minutes on an M5 Max, longer on older Macs), puts `Tekken 6.app` in
-   Applications and the game files in `~/Library/Application Support/Tekken 6`.
+### Install
 
-The builder contains this project's source, CMake and Ninja, but nothing from
-the game. `tools/package_mac_builder.sh` makes it.
+1. Download `Tekken 6 Builder.zip` from Releases and open `Tekken 6 Builder`.
+   macOS blocks it the first time because it isn't notarized: open System
+   Settings > Privacy & Security and click **Open Anyway**.
+2. Click **Choose Disc Image** and pick your `.iso`. If it asks for Apple's
+   Command Line Tools, click **Install**, then **Try Again**.
+3. Wait for it to finish (a few minutes), then click **Open Tekken 6**.
+
+Tekken 6 is now in Applications. The game files, saves and shader cache are in
+`~/Library/Application Support/Tekken 6`, so you can delete the disc image.
+
+The first launch shows a black screen for 10 to 20 seconds while shaders are
+prepared.
+
+### Controls
+
+| Xbox 360 | Keyboard |
+|---|---|
+| Start | Return |
+| A, B, X, Y | Space, Backspace, L, P |
+| Left stick | W A S D |
+| D-pad | Shift + arrow keys |
+| LB, RB / LT, RT | 1, 3 / Q, E |
+
+In a fight, L, P, ; and ' are left punch, right punch, left kick and right
+kick. F3 shows the frame rate. Game controllers work too.
+
+### Using a game folder somewhere else
+
+To play from a game folder you already have (the one with `Default.xex`, on any
+drive), hold Option while opening Tekken 6 and choose it. The app remembers it.
 
 ### Building from source
 
-Needs the Xcode Command Line Tools and `brew install cmake ninja`.
+Needs Apple's Command Line Tools and `brew install cmake ninja`.
 
 ```sh
-tools/build_mac.sh --iso /path/to/Tekken6.iso   # --arch x86_64 builds the Intel version
-tools/make_mac_app.sh --install                  # Tekken 6.app in /Applications
-tools/run_mac.sh                                 # or start it from the terminal
+tools/build_mac.sh --iso /path/to/Tekken6.iso   # add --arch x86_64 for Intel
+tools/make_mac_app.sh --install                  # puts Tekken 6.app in /Applications
 ```
 
-### Game files
+`tools/run_mac.sh` starts it from the terminal: `--game DIR` for the game
+folder, `--fullscreen`, `--res 768x432` for a lower 3D resolution, `--log` to
+write a log to `logs/`. `tools/package_mac_builder.sh` makes the builder.
 
-The first time the app opens it asks where the game is: a folder with the
-disc's files (the one with `Default.xex`) is used where it is, and a disc image
-is copied out to a folder you choose. Hold Option while opening the app to
-choose again. Saves and the shader cache are in
-`~/Library/Application Support/Tekken 6`. `TEKKEN6_DATA=<dir>` makes the app use
-`<dir>/game`, `<dir>/user` and `<dir>/cache` instead, and `run_mac.sh --game DIR`
-reads the game from `DIR`.
+### What changed for macOS
 
-### Playing
+All in the [SDK patch](patches/rexglue/README.md):
 
-Keyboard: Return is Start, Space A, Backspace B, L X, P Y, WASD the stick,
-Shift+arrows the d-pad, 1 and 3 the shoulder buttons, Q and E the triggers. In a
-fight L, P, ; and ' are 1, 2, 3 and 4. F3 shows the frame rate. Gamepads work.
+- Fixed two timing bugs in the Xbox event emulation that froze the first frame.
+- Converts a primitive type Metal can't draw.
+- Fixed a shader converter value that washed every scene out white.
+- Groups graphics work into fewer passes (M1 Max: 21 fps before, 60 after).
+- Paces frames evenly to the display (`--vulkan_present_pacing=false` turns it
+  off).
+- Intel Macs don't use Metal argument buffers, which hung the AMD GPU.
+- Removed the white square where the Xbox shows the gamer picture.
 
-The first launch shows a black screen for 10 to 20 seconds while shaders are
-prepared. Fights run at about 60 fps on an M5 Max, with a few dropped frames a
-minute. Laptops slow down on battery or a small charger.
+Intel needs macOS 15 because the macOS 13 AMD driver draws the game's motion
+blur wrong and the characters come out black.
 
-`run_mac.sh` options: `--fullscreen`, `--res 768x432` for a lower 3D resolution,
-`--log` to write a log to `logs/`. `--fsi` is faster but has visual glitches.
-
-### Mac changes
-
-All in the SDK patch:
-
-- Two thread-timing bugs in the Xbox event emulation froze the first frame.
-- Metal can't draw one primitive type the game uses; it is converted.
-- A wrong value in the shader converter washed every scene out white.
-- Graphics work is grouped into fewer passes (M1 Max: 21 fps before, 60 after).
-- Frames are paced evenly against the display's refresh
-  (`--vulkan_present_pacing=false` turns it off).
-- Intel Macs bind resources without Metal argument buffers, which hung the AMD
-  GPU.
-- No white square where the Xbox shows the gamer picture.
-
-`--execute_unclipped_draw_vs_on_cpu=true` (set by the launchers) is needed for
-Practice mode and fights to render. After changing the shader converter, delete
-`cache/`. If the game hangs, set `REX_DEBUG_DUMP_TRIGGER=/some/file` and create
-that file to print what every thread is waiting on.
+For developers: `--execute_unclipped_draw_vs_on_cpu=true` (set by the launchers)
+is needed for Practice mode and fights to render. After changing the shader
+converter, delete `cache/`. If the game hangs, set `REX_DEBUG_DUMP_TRIGGER=/some/file`
+and create that file to print what every thread is waiting on.
 
 ## Portable ISO builder
 
