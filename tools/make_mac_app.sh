@@ -64,7 +64,7 @@ exec "$here/tekken6" \
   --fullscreen=false \
   --log_file=/dev/null --log_level=off \
   --gpu_backend=vulkan --render_target_path_vulkan=fbo \
-  --async_shader_compilation=false --anisotropic_override=0 \
+  --async_shader_compilation=true --anisotropic_override=0 \
   --execute_unclipped_draw_vs_on_cpu=true \
   --mnk_mode=true \
   "$@"

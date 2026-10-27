@@ -66,7 +66,7 @@ exec "$host" \
   --fullscreen="$fullscreen" \
   --log_file="$log_file" --log_level="$log" \
   --gpu_backend=vulkan --render_target_path_vulkan="$rt_path" \
-  --async_shader_compilation=false --anisotropic_override=0 \
+  --async_shader_compilation=true --anisotropic_override=0 \
   --execute_unclipped_draw_vs_on_cpu=true \
   --mnk_mode=true \
   "${extra[@]}"

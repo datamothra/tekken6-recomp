@@ -69,7 +69,15 @@ time and drops the odd frame in busy moments. Keep a laptop on a proper charger;
 on battery or a small charger it slows down.
 
 The first launch shows a black screen for 10-20 seconds while it prepares its
-shaders. After that it starts straight away.
+shaders. After that it starts straight away. Shaders the game hasn't used before
+are prepared in the background: the picture may hold for a moment, but the game
+and its sound keep going together.
+
+Motion is kept even: the game's 60 Hz clock follows the display, and it is
+nudged so every frame reaches the screen at the same point of the display's
+refresh, instead of some frames showing twice and others not at all.
+`--vulkan_present_pacing=false` turns this off, and `TEKKEN6_PACING_LOG=<file>`
+writes the frame timings for measuring.
 
 Controls: a gamepad works, or the keyboard. Return is Start, Space is A,
 Backspace is B, L is X, P is Y, WASD is the stick, Shift+arrows is the d-pad,
@@ -88,6 +96,8 @@ What had to change for the Mac, all in the SDK patch:
 - Every scene came out washed white, from a wrong value in the shader converter.
 - The M1 Max ran at about 21 fps until the graphics work was regrouped into fewer
   passes per frame.
+- A white square sat beside the player's name in fights, where the Xbox shows
+  the gamer picture; with no profile picture it is now left empty.
 
 `run_mac.sh` also turns on `--execute_unclipped_draw_vs_on_cpu=true`. Without it
 Practice mode shows only the HUD and fights flash black.
