@@ -6106,6 +6106,28 @@ index a7d508a9e0db4742523689a8437d0cef98069dd3..db1407589958ef747e0d3deb07f668dc
      // Close the render target write check.
      a_.OpEndIf();
    }
+diff --git a/src/graphics/pipeline/shader/spirv_translator.cpp b/src/graphics/pipeline/shader/spirv_translator.cpp
+index 1774f9703037ff340cd44cc86a693a835fc12e1c..13102aa41f6865dfd236b6bd93b71994bb276550 100644
+--- a/src/graphics/pipeline/shader/spirv_translator.cpp
++++ b/src/graphics/pipeline/shader/spirv_translator.cpp
+@@ -3493,6 +3493,17 @@ spv::Id SpirvShaderTranslator::GetStorageAddressingIndex(
+     index = builder_->createBinOp(spv::OpIAdd, type_int_, index,
+                                   builder_->makeIntConstant(int(storage_index)));
+   }
++  // A relative index can point outside the register file or the float
++  // constants (the Xbox 360 tolerates that). GPUs without hardware bounds
++  // checking (AMD through Metal: MoltenVK's robustBufferAccess is not real
++  // there) then read or overwrite other memory, and Tekken 6's main menu hung
++  // the GPU. Clamp to the array.
++  uint32_t array_size = is_float_constant ? constant_register_map.float_count : register_count();
++  if (array_size) {
++    index = builder_->createTriBuiltinCall(type_int_, ext_inst_glsl_std_450_, GLSLstd450SClamp,
++                                           index, const_int_0_,
++                                           builder_->makeIntConstant(int(array_size - 1)));
++  }
+   return index;
+ }
+ 
 diff --git a/src/graphics/pipeline/shader/spirv_translator_fetch.cpp b/src/graphics/pipeline/shader/spirv_translator_fetch.cpp
 index 9ce3bb4ad0c3d61c8880195fb3c96f666068d89b..47ab932c68bbebe63d3a02a0227077eb9a6b4057 100644
 --- a/src/graphics/pipeline/shader/spirv_translator_fetch.cpp
@@ -10529,7 +10551,7 @@ index b49e033bc127a7ce0270607b2925643b0b7aa2df..c5538e17842a74456e04d559d2d5f37c
    size_t arguments_size =
        rex::align(sizeof(ArgsVkBeginRendering), alignof(VkRenderingAttachmentInfo));
 diff --git a/src/graphics/vulkan/pipeline_cache.cpp b/src/graphics/vulkan/pipeline_cache.cpp
-index 91ac08f6c11d065793da02000b91057c73e2aa86..34f519f36212fb11f4497924ba7ada68c1f4aa86 100644
+index 91ac08f6c11d065793da02000b91057c73e2aa86..43f016760f71598055de65ab653d38fe9d8f771a 100644
 --- a/src/graphics/vulkan/pipeline_cache.cpp
 +++ b/src/graphics/vulkan/pipeline_cache.cpp
 @@ -13,6 +13,8 @@
@@ -10576,7 +10598,71 @@ index 91ac08f6c11d065793da02000b91057c73e2aa86..34f519f36212fb11f4497924ba7ada68
    if (render_target_cache_.GetPath() == RenderTargetCache::Path::kHostRenderTargets) {
      using DepthStencilMode = SpirvShaderTranslator::Modification::DepthStencilMode;
      if (render_target_cache_.depth_float24_convert_in_pixel_shader() &&
-@@ -3214,6 +3230,16 @@ bool VulkanPipelineCache::EnsurePipelineCreated(const PipelineCreationArguments&
+@@ -1128,6 +1144,18 @@ bool VulkanPipelineCache::ConfigurePipeline(
+   auto it = pipelines_.find(description);
+   if (it != pipelines_.end()) {
+     VkPipeline found_pipeline = it->second.pipeline.load(std::memory_order_acquire);
++    if (found_pipeline == VK_NULL_HANDLE &&
++        it->second.is_placeholder.load(std::memory_order_acquire)) {
++      // Still being created by a creation thread: the draw is skipped (see
++      // the placeholder check in the command processor) rather than waiting.
++      last_pipeline_ = &*it;
++      pipeline_out = VK_NULL_HANDLE;
++      pipeline_layout_out = nullptr;
++      if (pipeline_handle_out) {
++        *pipeline_handle_out = &it->second;
++      }
++      return true;
++    }
+     if (found_pipeline == VK_NULL_HANDLE) {
+       PipelineCreationArguments creation_arguments;
+       if (!TryGetPipelineCreationArgumentsForDescription(description, &*it, creation_arguments) ||
+@@ -1158,22 +1186,20 @@ bool VulkanPipelineCache::ConfigurePipeline(
+ 
+   bool queued_async_creation = false;
+   if (use_async) {
++    // Draws with a pipeline still being created are skipped by the command
++    // processor, so a placeholder pipeline (the real vertex shader with a
++    // stand-in pixel shader) would never be drawn with; creating one here
++    // compiled a vertex shader on the GPU command thread and stalled the game
++    // for up to a quarter of a second whenever new shaders appeared. Only
++    // queue the real pipeline.
+     creation_arguments_real.priority = async_priority;
+-    PipelineCreationArguments creation_arguments_placeholder;
+-    if (TryGetPipelineCreationArgumentsForDescription(description, &pipeline,
+-                                                      creation_arguments_placeholder, true)) {
+-      pipeline.second.is_placeholder.store(true, std::memory_order_release);
+-      if (EnsurePipelineCreated(creation_arguments_placeholder, placeholder_pixel_shader_)) {
+-        {
+-          std::lock_guard<std::mutex> lock(creation_request_lock_);
+-          creation_queue_.push(creation_arguments_real);
+-        }
+-        creation_request_cond_.notify_one();
+-        queued_async_creation = true;
+-      } else {
+-        pipeline.second.is_placeholder.store(false, std::memory_order_release);
+-      }
++    pipeline.second.is_placeholder.store(true, std::memory_order_release);
++    {
++      std::lock_guard<std::mutex> lock(creation_request_lock_);
++      creation_queue_.push(creation_arguments_real);
+     }
++    creation_request_cond_.notify_one();
++    queued_async_creation = true;
+   }
+ 
+   if (!queued_async_creation && !EnsurePipelineCreated(creation_arguments_real)) {
+@@ -1202,7 +1228,8 @@ bool VulkanPipelineCache::ConfigurePipeline(
+   if (pipeline_handle_out) {
+     *pipeline_handle_out = &pipeline.second;
+   }
+-  return pipeline_out != VK_NULL_HANDLE && pipeline_layout_out != nullptr;
++  return queued_async_creation ||
++         (pipeline_out != VK_NULL_HANDLE && pipeline_layout_out != nullptr);
+ }
+ 
+ bool VulkanPipelineCache::IsCreatingPipelines() const {
+@@ -3214,6 +3241,16 @@ bool VulkanPipelineCache::EnsurePipelineCreated(const PipelineCreationArguments&
        return false;
    }
    input_assembly_state.primitiveRestartEnable = description.primitive_restart ? VK_TRUE : VK_FALSE;
@@ -10593,7 +10679,7 @@ index 91ac08f6c11d065793da02000b91057c73e2aa86..34f519f36212fb11f4497924ba7ada68
  
    VkPipelineViewportStateCreateInfo viewport_state;
    viewport_state.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
-@@ -3480,7 +3506,7 @@ bool VulkanPipelineCache::EnsurePipelineCreated(const PipelineCreationArguments&
+@@ -3480,7 +3517,7 @@ bool VulkanPipelineCache::EnsurePipelineCreated(const PipelineCreationArguments&
    const ui::vulkan::VulkanDevice::Functions& dfn = vulkan_device->functions();
    const VkDevice device = vulkan_device->device();
    VkPipeline pipeline;
@@ -10602,7 +10688,7 @@ index 91ac08f6c11d065793da02000b91057c73e2aa86..34f519f36212fb11f4497924ba7ada68
                                                           &pipeline_create_info, nullptr, &pipeline);
    if (create_result != VK_SUCCESS) {
      uint64_t ps_hash = creation_arguments.pixel_shader
-@@ -3517,6 +3543,114 @@ bool VulkanPipelineCache::EnsurePipelineCreated(const PipelineCreationArguments&
+@@ -3517,6 +3554,114 @@ bool VulkanPipelineCache::EnsurePipelineCreated(const PipelineCreationArguments&
    return true;
  }
  
@@ -10717,6 +10803,24 @@ index 91ac08f6c11d065793da02000b91057c73e2aa86..34f519f36212fb11f4497924ba7ada68
  void VulkanPipelineCache::CreationThread(size_t thread_index) {
    while (true) {
      PipelineCreationArguments creation_arguments;
+@@ -3550,6 +3695,8 @@ void VulkanPipelineCache::CreationThread(size_t thread_index) {
+       } else {
+         creation_arguments.pipeline->second.pipeline.store(VK_NULL_HANDLE,
+                                                            std::memory_order_release);
++        // No pipeline to wait for: let draws take the synchronous path again.
++        creation_arguments.pipeline->second.is_placeholder.store(false, std::memory_order_release);
+       }
+     }
+ 
+@@ -3583,6 +3730,8 @@ void VulkanPipelineCache::CreateQueuedPipelinesOnProcessorThread() {
+       } else {
+         creation_arguments.pipeline->second.pipeline.store(VK_NULL_HANDLE,
+                                                            std::memory_order_release);
++        // No pipeline to wait for: let draws take the synchronous path again.
++        creation_arguments.pipeline->second.is_placeholder.store(false, std::memory_order_release);
+       }
+     }
+   }
 diff --git a/src/graphics/vulkan/render_target_cache.cpp b/src/graphics/vulkan/render_target_cache.cpp
 index 0298f0628f59f75c020936e69a1043778d908270..f4f90589f3023445632d8c3776f85d55d309f824 100644
 --- a/src/graphics/vulkan/render_target_cache.cpp
